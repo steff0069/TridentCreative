@@ -42,10 +42,17 @@ public class Test implements Listener {
         grassblock.setItemMeta(grassmeta);
 
         PersistentDataContainer container = grassblock.getItemMeta().getPersistentDataContainer();
-        if (container.has(trident, PersistentDataType.STRING)) {
+        if (container.has(trident, PersistentDataType.STRING)){
+
             String value = container.get(trident, PersistentDataType.STRING);
-            e.setCancelled(true);
+            e.setDropItems(false);
+        } else if (!container.has(trident, PersistentDataType.STRING)){
+
+            String value = container.get(trident, PersistentDataType.STRING);
+            e.setDropItems(true);
+
         }
+
 
 
     }
