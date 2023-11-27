@@ -55,7 +55,7 @@ public class BlockEvent implements Listener {
     public void onBlockBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (blocksWithSpecificLore.contains(block.getLocation())) {
-            event.setDropItems(true);
+            event.setDropItems(false);
         }
     }
 
