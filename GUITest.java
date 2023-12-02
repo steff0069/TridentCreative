@@ -2,7 +2,9 @@ package ro.tridentmc.guitest;
 
 import com.github.stefvanschie.inventoryframework.gui.GuiItem;
 import com.github.stefvanschie.inventoryframework.gui.type.ChestGui;
+import com.github.stefvanschie.inventoryframework.pane.OutlinePane;
 import com.github.stefvanschie.inventoryframework.pane.PaginatedPane;
+import com.github.stefvanschie.inventoryframework.pane.Pane;
 import com.github.stefvanschie.inventoryframework.pane.StaticPane;
 import com.github.stefvanschie.inventoryframework.pane.util.Slot;
 import org.bukkit.Bukkit;
@@ -20,6 +22,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -38,16 +41,30 @@ public class GUI implements CommandExecutor {
     private String guiTitle;
     private int guiRows;
     private List<String> material;
-    private int nextSlot;
-    private int prevSlot;
-
+    private int nextPageSlot;
+    private int previousPageSlot;
+    private String materialNextPage;
+    private String materialPreviousPage;
+    private String materialCloseGui;
+    private int closeGuiSlot;
+    private List<String> blockLore;
+    private int amountToGive;
+    private static final int ITEMS_PER_PAGE = 28;
+    private String fillerGlass;
 
     public void reload() {
         material = config.options().getStringList("material");
         guiTitle = config.options().getString("gui-title");
         guiRows = config.options().getInt("gui-rows");
-        nextSlot = config.options().getInt("next-page-slot");
-        prevSlot = config.options().getInt("previous-page-slot");
+        nextPageSlot = config.options().getInt("next-page.slot");
+        previousPageSlot = config.options().getInt("previous-page.slot");
+        materialNextPage = config.options().getString("next-page.material");
+        materialPreviousPage = config.options().getString("previous-page.material");
+        closeGuiSlot = config.options().getInt("close-gui.slot");
+        materialCloseGui = config.options().getString("close-gui.material");
+        blockLore = config.options().getStringList("lore");
+        amountToGive = config.options().getInt("amount-to-give");
+        fillerGlass = config.options().getString("FILLER-GLASS");
     }
 
 
@@ -58,105 +75,50 @@ public class GUI implements CommandExecutor {
         Player player = (Player) sender;
 
         ChestGui gui = new ChestGui(guiRows, ChatColor.translateAlternateColorCodes('&', guiTitle));
+        PaginatedPane pages = new PaginatedPane(0,0,9, guiRows - 1);
 
-        StaticPane firstPane = new StaticPane(0, 0, 9, 6);
+        List<ItemStack> itemStacks = new ArrayList<>();
 
-        PaginatedPane paginatedPane = new PaginatedPane(0, 0, 9, guiRows);
+        for (String materialString : material) {
+            Material materialEnum = getMaterialFromString(materialString);
 
-        int slotsOnPage = guiRows - 1;
+            if (materialEnum != null) {
+                ItemStack itemStack = new ItemStack(materialEnum);
+                ItemMeta meta = itemStack.getItemMeta();
+                meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING, "creative");
 
-        int itemsPerPage = 9 * slotsOnPage;
-        int currentPage = 0;
-        int maxItemsPerPage = guiRows * 9 - 9;
+                // Apply shared lore to the item
+                List<String> translatedLore = new ArrayList<>();
+                for (String loreLine : blockLore) {
+                    String translatedLine = ChatColor.translateAlternateColorCodes('&', loreLine);
+                    translatedLine = translatedLine.replace("%player%", player.getName()); // Replace with actual player name
+                    translatedLore.add(translatedLine);
+                }
+                meta.setLore(translatedLore);
 
-        for (int i = 0; i < material.size(); i++) {
-            Material currentMaterial = Material.valueOf(material.get(i).toUpperCase());
-            ItemStack itemStack = new ItemStack(currentMaterial);
-
-            GuiItem item = new GuiItem(itemStack);
-
-            ItemMeta meta = item.getItem().getItemMeta();
-
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING, "creative");
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uncraftable"), PersistentDataType.BYTE, (byte) 1);
-
-            itemStack.setItemMeta(meta);
-
-            // Calculate the row and column based on the current index
-            int row = i % (maxItemsPerPage / 9); // Rows are now based on maxItemsPerPage
-            int column = i % 9; // Columns are still based on a single row
-
-            // Add the item to the paginated pane
-            firstPane.addItem(item, column, row);
-
-            if ((i + 1) % maxItemsPerPage == 0 || i == material.size() - 1) {
-                paginatedPane.addPane(0, firstPane);
-                firstPane = new StaticPane(0, 0, 9, guiRows); // Create a new pane for the next page
+                itemStack.setItemMeta(meta);
+                itemStacks.add(itemStack);
+            } else {
+                plugin.getLogger().warning("Invalid material in the list: " + materialString);
             }
         }
 
+        int itemsPerPage = gui.getRows() * 9;
 
+        int totalPages = (int) Math.ceil((double) itemStacks.size() / itemsPerPage);
 
-        GuiItem nextPageItem = new GuiItem(new ItemStack(Material.ARROW),
-                inventoryClickEvent -> {
-                    int nextPage = paginatedPane.getPage() + 1;
-                    if (nextPage < paginatedPane.getPages()) {
-                        paginatedPane.setPage(nextPage);
-                        gui.update();
-                    }
-                });
+        for (int i = 0; i < totalPages; i++) {
+            List<ItemStack> itemsForPage = itemStacks.stream()
+                    .skip(i * itemsPerPage)
+                    .limit(itemsPerPage)
+                    .collect(Collectors.toList());
 
-        GuiItem prevPageItem = new GuiItem(new ItemStack(Material.ARROW),
-                inventoryClickEvent -> {
-                    int previousPage = paginatedPane.getPage() - 1;
-                    if (previousPage >= 0) {
-                        paginatedPane.setPage(previousPage);
-                        gui.update();
-                    }
-                });
-
-
-        if (currentPage == 0){
-            firstPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
-        }else{
-            firstPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
-            firstPane.addItem(prevPageItem, Slot.fromIndex(prevSlot));
+            pages.addPane(i, createPage(itemsForPage));
         }
 
-        StaticPane newStaticPane = new StaticPane(0, 0, 9, guiRows);
 
-        for (int i = maxItemsPerPage; i < material.size(); i++) {
-            Material currentMaterial = Material.valueOf(material.get(i).toUpperCase());
-            ItemStack itemStack = new ItemStack(currentMaterial);
-
-            GuiItem item = new GuiItem(itemStack);
-
-            ItemMeta meta = item.getItem().getItemMeta();
-
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING, "creative");
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uncraftable"), PersistentDataType.BYTE, (byte) 1);
-
-            itemStack.setItemMeta(meta);
-
-            // Calculate the row and column based on the current index
-            int row = (i - maxItemsPerPage) / 9; // Rows are now based on maxItemsPerPage
-            int column = (i - maxItemsPerPage) % 9; // Columns are still based on a single row
-
-            // Add the item to the newStaticPane
-            newStaticPane.addItem(item, column, row);
-
-            // If the number of items on the current pane exceeds maxItemsPerPage, create a new pane
-            if ((i + 1) % maxItemsPerPage == 0 || i == material.size() - 1) {
-                paginatedPane.addPage(newStaticPane);
-                newStaticPane = new StaticPane(0, 0, 9, 6); // Create a new pane for the next page
-            }
-        }
-
-        newStaticPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
-        newStaticPane.addItem(prevPageItem, Slot.fromIndex(prevSlot));
-
-
-        gui.setOnGlobalClick(inventoryClickEvent -> {
+        pages.populateWithItemStacks(itemStacks);
+        pages.setOnClick(inventoryClickEvent -> {
             if (inventoryClickEvent.getView().getTitle().equalsIgnoreCase(ChatColor.translateAlternateColorCodes('&', guiTitle))) {
                 if (inventoryClickEvent.getClickedInventory() != null && inventoryClickEvent.getCurrentItem() != null) {
                     if (inventoryClickEvent.getClickedInventory().equals(inventoryClickEvent.getView())) ;
@@ -169,7 +131,7 @@ public class GUI implements CommandExecutor {
 
 
                         // Create a new ItemStack with 64 quantity of the clicked item
-                        ItemStack newItemStack = new ItemStack(clickedItem.getType(), 64);
+                        ItemStack newItemStack = new ItemStack(clickedItem.getType(), amountToGive);
                         newItemStack.setItemMeta(itemMeta);
 
 
@@ -186,223 +148,78 @@ public class GUI implements CommandExecutor {
 
 
                 }
+                inventoryClickEvent.setCancelled(true);
             }
         });
 
-        gui.setOnClose(inventoryCloseEvent -> {
+        gui.addPane(pages);
+
+        OutlinePane background = new OutlinePane(0, 5, 9, 1);
+        background.addItem(new GuiItem(new ItemStack(Material.valueOf(fillerGlass))));
+        background.setRepeat(true);
+        background.setPriority(Pane.Priority.LOWEST);
+        background.setOnClick(inventoryClickEvent -> {
+            inventoryClickEvent.setCancelled(true);
         });
-        paginatedPane.addPane(0, firstPane);
-        paginatedPane.addPage(newStaticPane);
-        gui.addPane(paginatedPane);
-        gui.update();
-        gui.show(player);
+
+        gui.addPane(background);
 
 
+        StaticPane navigation = new StaticPane(0,5,9,1);
 
-        return true;
-    }
-}
-package ro.tridentmc.guitest;
+        int maxPages1 = pages.getPages();
+        int currentPage1 = pages.getPage();
 
-import com.github.stefvanschie.inventoryframework.gui.GuiItem;
-import com.github.stefvanschie.inventoryframework.gui.type.ChestGui;
-import com.github.stefvanschie.inventoryframework.pane.PaginatedPane;
-import com.github.stefvanschie.inventoryframework.pane.StaticPane;
-import com.github.stefvanschie.inventoryframework.pane.util.Slot;
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
-import org.bukkit.command.CommandSender;
-import org.bukkit.entity.Player;
-import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.persistence.PersistentDataType;
+        System.out.println(pages.getPage());
+        System.out.println(pages.getPages());
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.stream.Collectors;
-
-public class GUI implements CommandExecutor {
-
-    private Config config;
-    private GUITest plugin;
-
-    public GUI(Config config, GUITest plugin) {
-        this.config = config;
-        this.plugin = plugin;
-        reload();
-    }
-
-    private String guiTitle;
-    private int guiRows;
-    private List<String> material;
-    private int nextSlot;
-    private int prevSlot;
-
-
-    public void reload() {
-        material = config.options().getStringList("material");
-        guiTitle = config.options().getString("gui-title");
-        guiRows = config.options().getInt("gui-rows");
-        nextSlot = config.options().getInt("next-page-slot");
-        prevSlot = config.options().getInt("previous-page-slot");
-    }
-
-
-
-    @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
-        Player player = (Player) sender;
-
-        ChestGui gui = new ChestGui(guiRows, ChatColor.translateAlternateColorCodes('&', guiTitle));
-
-        StaticPane firstPane = new StaticPane(0, 0, 9, 6);
-
-        PaginatedPane paginatedPane = new PaginatedPane(0, 0, 9, guiRows);
-
-        int slotsOnPage = guiRows - 1;
-
-        int itemsPerPage = 9 * slotsOnPage;
-        int currentPage = 0;
-        int maxItemsPerPage = guiRows * 9 - 9;
-
-        for (int i = 0; i < material.size(); i++) {
-            Material currentMaterial = Material.valueOf(material.get(i).toUpperCase());
-            ItemStack itemStack = new ItemStack(currentMaterial);
-
-            GuiItem item = new GuiItem(itemStack);
-
-            ItemMeta meta = item.getItem().getItemMeta();
-
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING, "creative");
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uncraftable"), PersistentDataType.BYTE, (byte) 1);
-
-            itemStack.setItemMeta(meta);
-
-            // Calculate the row and column based on the current index
-            int row = i % (maxItemsPerPage / 9); // Rows are now based on maxItemsPerPage
-            int column = i % 9; // Columns are still based on a single row
-
-            // Add the item to the paginated pane
-            firstPane.addItem(item, column, row);
-
-            if ((i + 1) % maxItemsPerPage == 0 || i == material.size() - 1) {
-                paginatedPane.addPane(0, firstPane);
-                firstPane = new StaticPane(0, 0, 9, guiRows); // Create a new pane for the next page
-            }
-        }
-
-
-
-        GuiItem nextPageItem = new GuiItem(new ItemStack(Material.ARROW),
-                inventoryClickEvent -> {
-                    int nextPage = paginatedPane.getPage() + 1;
-                    if (nextPage < paginatedPane.getPages()) {
-                        paginatedPane.setPage(nextPage);
-                        gui.update();
-                    }
-                });
-
-        GuiItem prevPageItem = new GuiItem(new ItemStack(Material.ARROW),
-                inventoryClickEvent -> {
-                    int previousPage = paginatedPane.getPage() - 1;
-                    if (previousPage >= 0) {
-                        paginatedPane.setPage(previousPage);
-                        gui.update();
-                    }
-                });
-
-
-        if (currentPage == 0){
-            firstPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
+        if (currentPage1 == maxPages1){
+            navigation.addItem(new GuiItem(new ItemStack(Material.valueOf(fillerGlass)), event -> {
+                event.setCancelled(true);
+            }), nextPageSlot, 0);
         }else{
-            firstPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
-            firstPane.addItem(prevPageItem, Slot.fromIndex(prevSlot));
+            navigation.addItem(new GuiItem(new ItemStack(Material.valueOf(materialNextPage)), event -> {
+                final int maxPages = pages.getPages();
+                int nextPage = pages.getPage() + 1;
+                if (nextPage > maxPages) nextPage = maxPages;
+                pages.setPage(nextPage);
+                gui.update();
+                event.setCancelled(true);
+            }), nextPageSlot, 0);
+
         }
 
-        StaticPane newStaticPane = new StaticPane(0, 0, 9, guiRows);
+        navigation.addItem(new GuiItem(new ItemStack(Material.valueOf(materialPreviousPage)), event -> {
+            int previousPage = pages.getPage() - 1;
+            if (previousPage < 0) previousPage = 0;
+            pages.setPage(previousPage);
+            gui.update();
+            event.setCancelled(true);
+        }), previousPageSlot, 0);
 
-        for (int i = maxItemsPerPage; i < material.size(); i++) {
-            Material currentMaterial = Material.valueOf(material.get(i).toUpperCase());
-            ItemStack itemStack = new ItemStack(currentMaterial);
+        navigation.addItem(new GuiItem(new ItemStack(Material.valueOf(materialCloseGui)), event ->
+                event.getWhoClicked().closeInventory()), closeGuiSlot, 0);
 
-            GuiItem item = new GuiItem(itemStack);
-
-            ItemMeta meta = item.getItem().getItemMeta();
-
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING, "creative");
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uncraftable"), PersistentDataType.BYTE, (byte) 1);
-
-            itemStack.setItemMeta(meta);
-
-            // Calculate the row and column based on the current index
-            int row = (i - maxItemsPerPage) / 9; // Rows are now based on maxItemsPerPage
-            int column = (i - maxItemsPerPage) % 9; // Columns are still based on a single row
-
-            // Add the item to the newStaticPane
-            newStaticPane.addItem(item, column, row);
-
-            // If the number of items on the current pane exceeds maxItemsPerPage, create a new pane
-            if ((i + 1) % maxItemsPerPage == 0 || i == material.size() - 1) {
-                paginatedPane.addPage(newStaticPane);
-                newStaticPane = new StaticPane(0, 0, 9, 6); // Create a new pane for the next page
-            }
-        }
-
-        newStaticPane.addItem(nextPageItem, Slot.fromIndex(nextSlot));
-        newStaticPane.addItem(prevPageItem, Slot.fromIndex(prevSlot));
-
-
-        gui.setOnGlobalClick(inventoryClickEvent -> {
-            if (inventoryClickEvent.getView().getTitle().equalsIgnoreCase(ChatColor.translateAlternateColorCodes('&', guiTitle))) {
-                if (inventoryClickEvent.getClickedInventory() != null && inventoryClickEvent.getCurrentItem() != null) {
-                    if (inventoryClickEvent.getClickedInventory().equals(inventoryClickEvent.getView())) ;
-                    ItemStack clickedItem = inventoryClickEvent.getCurrentItem();
-                    ItemMeta itemMeta = clickedItem.getItemMeta();
-
-
-                    if (itemMeta.getPersistentDataContainer().has(new NamespacedKey(plugin, "itemmeta"), PersistentDataType.STRING)){
-                        Player p = (Player) inventoryClickEvent.getWhoClicked();
-
-
-                        // Create a new ItemStack with 64 quantity of the clicked item
-                        ItemStack newItemStack = new ItemStack(clickedItem.getType(), 64);
-                        newItemStack.setItemMeta(itemMeta);
-
-
-                        // Give the new ItemStack to the player
-                        p.getInventory().addItem(newItemStack);
-                        inventoryClickEvent.setCancelled(true);
-                    }else{
-                        inventoryClickEvent.setCancelled(true);
-                    }
-
-                    if (inventoryClickEvent.getCurrentItem() == null) {
-                        return;
-                    }
-
-
-                }
-            }
-        });
-
-        gui.setOnClose(inventoryCloseEvent -> {
-        });
-        paginatedPane.addPane(0, firstPane);
-        paginatedPane.addPage(newStaticPane);
-        gui.addPane(paginatedPane);
-        gui.update();
+        gui.addPane(navigation);
         gui.show(player);
-
-
 
         return true;
     }
+
+    private Material getMaterialFromString(String materialString) {
+        try {
+            return Material.valueOf(materialString);
+        } catch (IllegalArgumentException e) {
+            plugin.getLogger().warning("Invalid material in the list, replacing it with STONE");
+            e.printStackTrace();
+            return Material.STONE;
+        }
+    }
+
+    private Pane createPage(List<ItemStack> items) {
+        PaginatedPane page = new PaginatedPane(0, 0, 9, guiRows - 1, Pane.Priority.LOWEST);
+        page.populateWithItemStacks(items);
+        return page;
+    }
+
 }
